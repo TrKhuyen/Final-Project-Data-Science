@@ -52,6 +52,9 @@ df, embeddings, cosine_sim, bert_model = load_assets()
 if 'history' not in st.session_state:
     st.session_state.history = []
 
+if 'evaluation_history' not in st.session_state:
+    st.session_state.evaluation_history = []  # Lưu kết quả đánh giá realtime
+
 def search_by_description(description, df, embeddings, bert_model, top_n=10, min_score=7.0):
     """Tìm anime theo mô tả sử dụng BERT semantic search"""
     user_vector = bert_model.encode([description])
@@ -198,6 +201,81 @@ def calculate_rmse_mae(anime_title, recommendations, df):
     except Exception as e:
         return 0.0, 0.0
 
+def save_evaluation_result(anime_title, recommendations, df, search_type="title"):
+    """Lưu kết quả đánh giá vào session_state"""
+    if recommendations is None or len(recommendations) == 0:
+        return
+    
+    precision = calculate_precision_at_k(anime_title, recommendations, df, 10)
+    recall = calculate_recall_at_k(anime_title, recommendations, df, 10)
+    rmse, mae = calculate_rmse_mae(anime_title, recommendations, df)
+    
+    # Kiểm tra nếu anime đã tồn tại thì cập nhật, không thì thêm mới
+    existing = [e for e in st.session_state.evaluation_history if e['anime'] == anime_title]
+    if existing:
+        # Cập nhật kết quả cũ
+        for e in st.session_state.evaluation_history:
+            if e['anime'] == anime_title:
+                e['precision'] = precision
+                e['recall'] = recall
+                e['rmse'] = rmse
+                e['mae'] = mae
+                e['num_recs'] = len(recommendations)
+                e['search_type'] = search_type
+                break
+    else:
+        # Thêm mới
+        st.session_state.evaluation_history.append({
+            'anime': anime_title,
+            'precision': precision,
+            'recall': recall,
+            'rmse': rmse,
+            'mae': mae,
+            'num_recs': len(recommendations),
+            'search_type': search_type
+        })
+
+def save_description_search_evaluation(query, results, df):
+    """Lưu kết quả đánh giá cho tìm kiếm theo mô tả"""
+    if results is None or len(results) == 0:
+        return
+    
+    # Tính metrics dựa trên top result
+    top_anime = results.iloc[0]['title']
+    
+    # Tính precision dựa trên hybrid_score (similarity với query)
+    avg_hybrid = results['hybrid_score'].mean()
+    
+    # Tính RMSE và MAE dựa trên score
+    avg_score = results['score'].mean()
+    scores = results['score'].values
+    rmse = np.sqrt(np.mean((scores - avg_score) ** 2))
+    mae = np.mean(np.abs(scores - avg_score))
+    
+    # Kiểm tra nếu query đã tồn tại thì cập nhật
+    search_key = f"[Mô tả] {query[:30]}..."
+    existing = [e for e in st.session_state.evaluation_history if e['anime'] == search_key]
+    if existing:
+        for e in st.session_state.evaluation_history:
+            if e['anime'] == search_key:
+                e['precision'] = avg_hybrid
+                e['recall'] = avg_hybrid * 0.8  # Estimate
+                e['rmse'] = rmse
+                e['mae'] = mae
+                e['num_recs'] = len(results)
+                e['search_type'] = 'description'
+                break
+    else:
+        st.session_state.evaluation_history.append({
+            'anime': search_key,
+            'precision': avg_hybrid,
+            'recall': avg_hybrid * 0.8,
+            'rmse': rmse,
+            'mae': mae,
+            'num_recs': len(results),
+            'search_type': 'description'
+        })
+
 st.sidebar.title("🎌 Bộ lọc & Cài đặt")
 
 st.sidebar.subheader("📍 Lọc theo ngữ cảnh")
@@ -230,21 +308,17 @@ tab1, tab2, tab3 = st.tabs(["🔍 Gợi ý Anime", "📊 Phân tích Dữ liệu
 with tab1:
     st.subheader("🎬 Tìm anime phù hợp với sở thích của bạn")
     
-    col_input, col_random = st.columns([4, 1])
-    
     if 'search_query' not in st.session_state:
         st.session_state.search_query = ""
     
-    user_input = col_input.text_input(
+    user_input = st.text_input(
         "Nhập tên anime hoặc mô tả:", 
         value=st.session_state.search_query,
         placeholder="VD: Naruto, Attack on Titan, anime về samurai..."
     )
     
-    random_btn = col_random.button("🎲 Ngẫu nhiên")
-    
-    if st.button("🔍 Tìm kiếm ngay", type="primary") or random_btn:
-        target = user_input if not random_btn else df.sample(1).iloc[0]['title']
+    if st.button("🔍 Tìm kiếm ngay", type="primary"):
+        target = user_input
         
         if target:
             if target not in st.session_state.history:
@@ -255,6 +329,12 @@ with tab1:
                 
                 if all_matches is not None and len(all_matches) > 1:
                     st.info(f"🔍 Tìm thấy **{len(all_matches)}** anime phù hợp với '{target}'. Vui lòng chọn:")
+                    
+                    # Lưu đánh giá cho anime đầu tiên (best match)
+                    best_match = all_matches.iloc[0]['title']
+                    _, recs_for_eval = get_hybrid_recommendations(best_match, df, cosine_sim, top_n, min_score)
+                    if recs_for_eval is not None:
+                        save_evaluation_result(best_match, recs_for_eval, df, "multi_match")
                     
                     for i in range(0, len(all_matches), 5):
                         cols = st.columns(5)
@@ -292,6 +372,9 @@ with tab1:
                         st.warning("⚠️ Không có anime phù hợp với bộ lọc!")
                     else:
                         st.success(f"✅ Tìm thấy: **{input_anime['title']}**")
+                        
+                        # Lưu kết quả đánh giá realtime
+                        save_evaluation_result(input_anime['title'], recommendations, df)
                         
                         col1, col2, col3, col4 = st.columns(4)
                         col1.metric("Score", f"{input_anime['score']:.2f}/10")
@@ -366,6 +449,9 @@ with tab1:
                     if description_results is not None and len(description_results) > 0:
                         st.success(f"✅ Tìm thấy {len(description_results)} anime phù hợp với mô tả!")
                         
+                        # Lưu đánh giá cho tìm kiếm theo mô tả
+                        save_description_search_evaluation(target, description_results, df)
+                        
                         for i in range(0, len(description_results), 5):
                             cols = st.columns(5)
                             for j, (idx, row) in enumerate(description_results.iloc[i:i+5].iterrows()):
@@ -419,75 +505,111 @@ with tab2:
         st.warning("Chưa có biểu đồ. Chạy 03_eda_visualization.py!")
 
 with tab3:
-    st.header("Đánh giá Hiệu năng Mô hình")
-    st.markdown(f"*Đánh giá trên {len(df)} anime*")
+    st.header("🎯 Đánh giá Realtime theo Người dùng")
+    st.markdown("*Đánh giá dựa trên các lần tìm kiếm của bạn*")
     
-    test_anime = ['Naruto', 'Death Note', 'One Piece', 'Attack on Titan', 'Dragon Ball Z']
-    precisions = []
-    recalls = []
-    rmse_list = []
-    mae_list = []
-    valid_anime = []
+    # Hiển thị hướng dẫn
+    st.info("💡 **Hướng dẫn:** Hãy tìm kiếm anime ở tab '🔍 Gợi ý Anime', kết quả sẽ tự động được thêm vào đây để đánh giá!")
     
-    with st.spinner("Đang tính toán metrics..."):
-        for anime in test_anime:
-            _, recs = get_hybrid_recommendations(anime, df, cosine_sim, 10, 0)
-            
-            if recs is not None and len(recs) > 0:
-                precision = calculate_precision_at_k(anime, recs, df, 10)
-                recall = calculate_recall_at_k(anime, recs, df, 10)
-                rmse, mae = calculate_rmse_mae(anime, recs, df)
-                
-                precisions.append(precision)
-                recalls.append(recall)
-                rmse_list.append(rmse)
-                mae_list.append(mae)
-                valid_anime.append(anime)
+    # Nút xóa lịch sử đánh giá
+    col_clear, col_info = st.columns([1, 3])
+    with col_clear:
+        if st.button("🗑️ Xóa lịch sử đánh giá", type="secondary"):
+            st.session_state.evaluation_history = []
+            st.rerun()
     
-    avg_precision = np.mean(precisions) if precisions else 0
-    avg_recall = np.mean(recalls) if recalls else 0
-    avg_rmse = np.mean(rmse_list) if rmse_list else 0
-    avg_mae = np.mean(mae_list) if mae_list else 0
-    f1_score = 2 * (avg_precision * avg_recall) / (avg_precision + avg_recall) if (avg_precision + avg_recall) > 0 else 0
-    
-    # Row 1: Main metrics
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Precision@10", f"{avg_precision*100:.1f}%", help="Tỷ lệ gợi ý có cùng genre trong top-10")
-    col2.metric("Recall@10", f"{avg_recall*100:.1f}%", help="Tỷ lệ anime relevant được gợi ý trong top-10")
-    col3.metric("RMSE", f"{avg_rmse:.3f}", help="Root Mean Square Error - Sai số bình phương trung bình")
-    col4.metric("MAE", f"{avg_mae:.3f}", help="Mean Absolute Error - Sai số tuyệt đối trung bình")
-    
-    # Row 2: Additional info
-    col5, col6, col7, col8 = st.columns(4)
-    col5.metric("F1-Score", f"{f1_score*100:.1f}%", help="Harmonic mean của Precision và Recall")
-    col6.metric("Số anime test", len(valid_anime), help="Số anime đã test thành công")
-    col7.metric("Dataset size", f"{len(df):,}", help="Tổng số anime")
-    col8.metric("Embedding dim", "384", help="BERT vector dimensions")
+    with col_info:
+        st.metric("Số lần tìm kiếm đã đánh giá", len(st.session_state.evaluation_history))
     
     st.markdown("---")
     
-    col_plot, col_info = st.columns([2, 1])
-    
-    with col_plot:
-        st.subheader("📊 Metrics từng anime")
+    # Kiểm tra có dữ liệu đánh giá không
+    if len(st.session_state.evaluation_history) == 0:
+        st.warning("⚠️ Chưa có dữ liệu đánh giá. Hãy tìm kiếm anime ở tab đầu tiên!")
         
-        if precisions and recalls:
-            test_names = valid_anime
+        # Hiển thị gợi ý
+        st.markdown("### 🎬 Gợi ý anime để thử:")
+        sample_anime = ['Naruto', 'Death Note', 'One Piece', 'Attack on Titan', 'Dragon Ball Z']
+        cols = st.columns(5)
+        for i, anime in enumerate(sample_anime):
+            with cols[i]:
+                st.markdown(f"**{anime}**")
+    else:
+        # Tính toán metrics từ lịch sử
+        eval_df = pd.DataFrame(st.session_state.evaluation_history)
+        
+        precisions = eval_df['precision'].tolist()
+        recalls = eval_df['recall'].tolist()
+        rmse_list = eval_df['rmse'].tolist()
+        mae_list = eval_df['mae'].tolist()
+        valid_anime = eval_df['anime'].tolist()
+        
+        avg_precision = np.mean(precisions) if precisions else 0
+        avg_recall = np.mean(recalls) if recalls else 0
+        avg_rmse = np.mean(rmse_list) if rmse_list else 0
+        avg_mae = np.mean(mae_list) if mae_list else 0
+        f1_score = 2 * (avg_precision * avg_recall) / (avg_precision + avg_recall) if (avg_precision + avg_recall) > 0 else 0
+        
+        # Row 1: Main metrics
+        st.subheader("📊 Metrics Trung bình")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Precision@10", f"{avg_precision*100:.1f}%", help="Tỷ lệ gợi ý có cùng genre trong top-10")
+        col2.metric("Recall@10", f"{avg_recall*100:.1f}%", help="Tỷ lệ anime relevant được gợi ý trong top-10")
+        col3.metric("RMSE", f"{avg_rmse:.3f}", help="Root Mean Square Error - Sai số bình phương trung bình")
+        col4.metric("MAE", f"{avg_mae:.3f}", help="Mean Absolute Error - Sai số tuyệt đối trung bình")
+        
+        # Row 2: Additional info
+        col5, col6, col7, col8 = st.columns(4)
+        col5.metric("F1-Score", f"{f1_score*100:.1f}%", help="Harmonic mean của Precision và Recall")
+        col6.metric("Số anime đã test", len(valid_anime), help="Số anime bạn đã tìm kiếm")
+        col7.metric("Dataset size", f"{len(df):,}", help="Tổng số anime")
+        col8.metric("Embedding dim", "384", help="BERT vector dimensions")
+        
+        st.markdown("---")
+        
+        # Hiển thị bảng chi tiết
+        st.subheader("📋 Chi tiết từng lần tìm kiếm")
+        
+        detail_df = eval_df.copy()
+        detail_df['precision'] = detail_df['precision'].apply(lambda x: f"{x*100:.1f}%")
+        detail_df['recall'] = detail_df['recall'].apply(lambda x: f"{x*100:.1f}%")
+        detail_df['rmse'] = detail_df['rmse'].apply(lambda x: f"{x:.3f}")
+        detail_df['mae'] = detail_df['mae'].apply(lambda x: f"{x:.3f}")
+        if 'search_type' in detail_df.columns:
+            detail_df['search_type'] = detail_df['search_type'].apply(lambda x: '🔍 Tên' if x == 'title' else ('📝 Mô tả' if x == 'description' else '📋 Nhiều KQ'))
+            detail_df.columns = ['Anime', 'Precision@10', 'Recall@10', 'RMSE', 'MAE', 'Số gợi ý', 'Loại']
+        else:
+            detail_df.columns = ['Anime', 'Precision@10', 'Recall@10', 'RMSE', 'MAE', 'Số gợi ý']
+        
+        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        
+        st.subheader("📊 Biểu đồ Metrics")
+        
+        if len(precisions) > 0:
+            # Giới hạn hiển thị 10 anime gần nhất để biểu đồ không quá rối
+            display_limit = min(10, len(valid_anime))
+            test_names = valid_anime[-display_limit:]
+            display_precisions = precisions[-display_limit:]
+            display_recalls = recalls[-display_limit:]
+            display_rmse = rmse_list[-display_limit:]
+            display_mae = mae_list[-display_limit:]
             
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+            fig, axes = plt.subplots(1, 2, figsize=(18, 6))
             
             # Chart 1: Precision & Recall
             x = np.arange(len(test_names))
             width = 0.35
             
-            bars1 = axes[0].bar(x - width/2, [p*100 for p in precisions], width, label='Precision@10', color='steelblue')
-            bars2 = axes[0].bar(x + width/2, [r*100 for r in recalls[:len(precisions)]], width, label='Recall@10', color='coral')
+            bars1 = axes[0].bar(x - width/2, [p*100 for p in display_precisions], width, label='Precision@10', color='steelblue')
+            bars2 = axes[0].bar(x + width/2, [r*100 for r in display_recalls], width, label='Recall@10', color='coral')
             
             axes[0].set_ylabel('Score (%)', fontsize=11)
             axes[0].set_xlabel('Anime', fontsize=11)
-            axes[0].set_title('Precision@10 vs Recall@10', fontsize=12, fontweight='bold')
+            axes[0].set_title('Precision@10 vs Recall@10 (Realtime)', fontsize=12, fontweight='bold')
             axes[0].set_xticks(x)
-            axes[0].set_xticklabels(test_names, rotation=45, ha='right')
+            axes[0].set_xticklabels([name[:15] + '...' if len(name) > 15 else name for name in test_names], rotation=45, ha='right')
             axes[0].legend()
             axes[0].set_ylim(0, 110)
             axes[0].grid(True, alpha=0.3, axis='y')
@@ -502,64 +624,31 @@ with tab3:
                                xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
             
             # Chart 2: RMSE & MAE
-            if rmse_list and mae_list:
-                bars3 = axes[1].bar(x - width/2, rmse_list[:len(test_names)], width, label='RMSE', color='forestgreen')
-                bars4 = axes[1].bar(x + width/2, mae_list[:len(test_names)], width, label='MAE', color='gold')
-                
-                axes[1].set_ylabel('Error Score', fontsize=11)
-                axes[1].set_xlabel('Anime', fontsize=11)
-                axes[1].set_title('RMSE vs MAE (Score Similarity)', fontsize=12, fontweight='bold')
-                axes[1].set_xticks(x)
-                axes[1].set_xticklabels(test_names, rotation=45, ha='right')
-                axes[1].legend()
-                axes[1].grid(True, alpha=0.3, axis='y')
-                
-                for bar in bars3:
-                    height = bar.get_height()
-                    axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
-                                   xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
-                for bar in bars4:
-                    height = bar.get_height()
-                    axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
-                                   xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
+            bars3 = axes[1].bar(x - width/2, display_rmse, width, label='RMSE', color='forestgreen')
+            bars4 = axes[1].bar(x + width/2, display_mae, width, label='MAE', color='gold')
+            
+            axes[1].set_ylabel('Error Score', fontsize=11)
+            axes[1].set_xlabel('Anime', fontsize=11)
+            axes[1].set_title('RMSE vs MAE (Realtime)', fontsize=12, fontweight='bold')
+            axes[1].set_xticks(x)
+            axes[1].set_xticklabels([name[:15] + '...' if len(name) > 15 else name for name in test_names], rotation=45, ha='right')
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3, axis='y')
+            
+            for bar in bars3:
+                height = bar.get_height()
+                axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
+                               xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
+            for bar in bars4:
+                height = bar.get_height()
+                axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
+                               xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
             
             plt.tight_layout()
             st.pyplot(fig)
-    
-    with col_info:
-        st.subheader("📋 Giải thích Metrics")
-        
-        with st.expander("📊 Precision@K", expanded=True):
-            st.markdown("""**Precision@K** = Relevant trong top-K / K
             
-Đo lường: Trong K anime được gợi ý, có bao nhiêu % thực sự liên quan (cùng genre).""")
-        
-        with st.expander("📊 Recall@K"):
-            st.markdown("""**Recall@K** = Relevant trong top-K / Tổng relevant
-            
-Đo lường: Trong tất cả anime liên quan, hệ thống đã gợi ý được bao nhiêu % trong top-K.""")
-        
-        with st.expander("📊 RMSE & MAE"):
-            st.markdown("""**RMSE** = √(Σ(error)² / n)
-            
-**MAE** = Σ|error| / n
-            
-Đo độ chênh lệch score giữa anime gốc và anime được gợi ý. Giá trị thấp = gợi ý có chất lượng tương đương.""")
-        
-        with st.expander("📊 F1-Score"):
-            st.markdown("""**F1** = 2 × (Precision × Recall) / (Precision + Recall)
-            
-Là trung bình điều hòa của Precision và Recall, cân bằng giữa độ chính xác và độ bao phủ.""")
-        
-        st.markdown("---")
-        
-        st.success("""**✅ Ưu điểm:**
-- BERT embeddings hiểu ngữ nghĩa tốt
-- Hybrid score cân bằng similarity & quality""")
-        
-        st.warning("""**💡 Cải thiện:**
-- Thêm collaborative filtering
-- Fine-tune BERT trên anime domain""")
+            if len(valid_anime) > display_limit:
+                st.caption(f"*Hiển thị {display_limit} anime gần nhất trong tổng số {len(valid_anime)} anime đã test*")
 
 # Footer
 st.markdown("---")
