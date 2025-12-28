@@ -34,7 +34,6 @@ def load_assets():
             with open(model_file, "rb") as f:
                 model = pickle.load(f)
         else:
-            st.info("Đang load BERT model...")
             model = SentenceTransformer('all-MiniLM-L6-v2')
             with open(model_file, "wb") as f:
                 pickle.dump(model, f)
