@@ -486,24 +486,26 @@ with tab2:
     
     viz_dir = Path('visualizations')
     if viz_dir.exists():
-        col1, col2, col3 = st.columns(3)
+        # Đổi thành 2 cột để hiển thị 4 ảnh đầu cân đối (2 trái, 2 phải)
+        col1, col2 = st.columns(2)
         
         with col1:
             if (viz_dir / '01_score_distribution.png').exists():
-                st.image(str(viz_dir / '01_score_distribution.png'))
+                st.image(str(viz_dir / '01_score_distribution.png'), caption="Phân bố điểm số")
             
             if (viz_dir / '03_genre_frequency.png').exists():
-                st.image(str(viz_dir / '03_genre_frequency.png'))
+                st.image(str(viz_dir / '03_genre_frequency.png'), caption="Tần suất thể loại")
         
         with col2:
             if (viz_dir / '02_top_10_anime.png').exists():
-                st.image(str(viz_dir / '02_top_10_anime.png'))
+                st.image(str(viz_dir / '02_top_10_anime.png'), caption="Top 10 Anime")
             
             if (viz_dir / '04_correlation_heatmap.png').exists():
-                st.image(str(viz_dir / '04_correlation_heatmap.png'))
-        with col3:
-            if (viz_dir / '05_boxplots_features.png').exists():
-                st.image(str(viz_dir / '05_boxplots_features.png'))
+                st.image(str(viz_dir / '04_correlation_heatmap.png'), caption="Ma trận tương quan")
+
+        if (viz_dir / '05_boxplots_features.png').exists():
+            st.image(str(viz_dir / '05_boxplots_features.png'), caption="Biểu đồ hộp các đặc trưng")
+            
     else:
         st.warning("Chưa có biểu đồ. Chạy 03_eda_visualization.py!")
 
