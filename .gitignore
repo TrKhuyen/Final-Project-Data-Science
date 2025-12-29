@@ -94,7 +94,7 @@ Thumbs.db
 # data/anime_data_raw.json
 
 # Visualizations output
-visualizations/*.png
+#visualizations/*.png
 
 # Logs
 *.log
