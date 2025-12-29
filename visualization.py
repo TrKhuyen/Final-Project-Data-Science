@@ -96,3 +96,53 @@ plt.title('Ma trận tương quan (Correlation Matrix)', fontsize=14, fontweight
 plt.tight_layout()
 output_file = viz_dir / '04_correlation_heatmap.png'
 plt.savefig(output_file, dpi=300, bbox_inches='tight')
+
+# BIỂU ĐỒ 5: BOX PLOTS CHO CÁC FEATURES QUAN TRỌNG
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig.suptitle('Box Plots - Phân tích Features Quan trọng', fontsize=16, fontweight='bold', y=0.995)
+
+bp1 = axes[0, 0].boxplot(df['score'], vert=True, patch_artist=True,
+                         boxprops=dict(facecolor='lightblue', alpha=0.7),
+                         medianprops=dict(color='red', linewidth=2),
+                         whiskerprops=dict(linewidth=1.5),
+                         capprops=dict(linewidth=1.5))
+axes[0, 0].set_ylabel('Score', fontsize=11, fontweight='bold')
+axes[0, 0].set_title(f'Score Distribution\nMedian: {df["score"].median():.2f}', fontsize=11)
+axes[0, 0].grid(True, alpha=0.3, axis='y')
+axes[0, 0].set_xticklabels(['Score'])
+
+bp2 = axes[0, 1].boxplot(df['scored_by'], vert=True, patch_artist=True,
+                         boxprops=dict(facecolor='lightcoral', alpha=0.7),
+                         medianprops=dict(color='darkred', linewidth=2),
+                         whiskerprops=dict(linewidth=1.5))
+axes[0, 1].set_ylabel('Số người đánh giá', fontsize=11, fontweight='bold')
+axes[0, 1].set_title(f'Scored By Distribution\nMedian: {df["scored_by"].median():,.0f}', fontsize=11)
+axes[0, 1].set_yscale('log')
+axes[0, 1].grid(True, alpha=0.3, axis='y')
+axes[0, 1].set_xticklabels(['Scored By'])
+
+bp3 = axes[1, 0].boxplot(df['members'], vert=True, patch_artist=True,
+                         boxprops=dict(facecolor='lightgreen', alpha=0.7),
+                         medianprops=dict(color='darkgreen', linewidth=2),
+                         whiskerprops=dict(linewidth=1.5))
+axes[1, 0].set_ylabel('Số members', fontsize=11, fontweight='bold')
+axes[1, 0].set_title(f'Members Distribution\nMedian: {df["members"].median():,.0f}', fontsize=11)
+axes[1, 0].set_yscale('log')
+axes[1, 0].grid(True, alpha=0.3, axis='y')
+axes[1, 0].set_xticklabels(['Members'])
+
+bp4 = axes[1, 1].boxplot(df['favorites'], vert=True, patch_artist=True,
+                         boxprops=dict(facecolor='lightyellow', alpha=0.7),
+                         medianprops=dict(color='orange', linewidth=2),
+                         whiskerprops=dict(linewidth=1.5))
+axes[1, 1].set_ylabel('Số favorites', fontsize=11, fontweight='bold')
+axes[1, 1].set_title(f'Favorites Distribution\nMedian: {df["favorites"].median():,.0f}', fontsize=11)
+axes[1, 1].set_yscale('log')
+axes[1, 1].grid(True, alpha=0.3, axis='y')
+axes[1, 1].set_xticklabels(['Favorites'])
+
+plt.tight_layout()
+output_file = viz_dir / '05_boxplots_features.png'
+plt.savefig(output_file, dpi=300, bbox_inches='tight')
+plt.close('all')
