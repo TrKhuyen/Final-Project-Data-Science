@@ -543,30 +543,47 @@ with tab3:
         # Tính toán metrics từ lịch sử
         eval_df = pd.DataFrame(st.session_state.evaluation_history)
         
+        # --- LỌC DỮ LIỆU ĐỂ TÍNH TOÁN ---
+        # Precision/Recall tính trên toàn bộ
         precisions = eval_df['precision'].tolist()
         recalls = eval_df['recall'].tolist()
-        rmse_list = eval_df['rmse'].tolist()
-        mae_list = eval_df['mae'].tolist()
-        valid_anime = eval_df['anime'].tolist()
+        
+        # RMSE/MAE chỉ tính cho các search_type KHÔNG PHẢI là description
+        # Vì tìm theo mô tả không có "điểm gốc" chính xác để so sánh sai số
+        score_based_df = eval_df[eval_df['search_type'] != 'description']
+        
+        rmse_list = score_based_df['rmse'].tolist()
+        mae_list = score_based_df['mae'].tolist()
         
         avg_precision = np.mean(precisions) if precisions else 0
         avg_recall = np.mean(recalls) if recalls else 0
+        
+        # Chỉ tính trung bình nếu có dữ liệu score-based
         avg_rmse = np.mean(rmse_list) if rmse_list else 0
         avg_mae = np.mean(mae_list) if mae_list else 0
+        
         f1_score = 2 * (avg_precision * avg_recall) / (avg_precision + avg_recall) if (avg_precision + avg_recall) > 0 else 0
         
         # Row 1: Main metrics
         st.subheader("📊 Metrics Trung bình")
+        st.caption("Lưu ý: RMSE và MAE không tính cho tìm kiếm bằng mô tả.")
+        
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Precision@10", f"{avg_precision*100:.1f}%", help="Tỷ lệ gợi ý có cùng genre trong top-10")
         col2.metric("Recall@10", f"{avg_recall*100:.1f}%", help="Tỷ lệ anime relevant được gợi ý trong top-10")
-        col3.metric("RMSE", f"{avg_rmse:.3f}", help="Root Mean Square Error - Sai số bình phương trung bình")
-        col4.metric("MAE", f"{avg_mae:.3f}", help="Mean Absolute Error - Sai số tuyệt đối trung bình")
+        
+        # Hiển thị N/A nếu chưa có tìm kiếm theo tên nào
+        if len(score_based_df) > 0:
+            col3.metric("RMSE", f"{avg_rmse:.3f}", help="Chỉ tính trên tìm kiếm theo Tên Anime")
+            col4.metric("MAE", f"{avg_mae:.3f}", help="Chỉ tính trên tìm kiếm theo Tên Anime")
+        else:
+            col3.metric("RMSE", "N/A", help="Cần tìm kiếm theo tên anime cụ thể")
+            col4.metric("MAE", "N/A", help="Cần tìm kiếm theo tên anime cụ thể")
         
         # Row 2: Additional info
         col5, col6, col7, col8 = st.columns(4)
         col5.metric("F1-Score", f"{f1_score*100:.1f}%", help="Harmonic mean của Precision và Recall")
-        col6.metric("Số anime đã test", len(valid_anime), help="Số anime bạn đã tìm kiếm")
+        col6.metric("Số anime đã test", len(eval_df), help="Tổng số lần tìm kiếm")
         col7.metric("Dataset size", f"{len(df):,}", help="Tổng số anime")
         col8.metric("Embedding dim", "384", help="BERT vector dimensions")
         
@@ -576,15 +593,31 @@ with tab3:
         st.subheader("📋 Chi tiết từng lần tìm kiếm")
         
         detail_df = eval_df.copy()
+        
+        # Format hiển thị
         detail_df['precision'] = detail_df['precision'].apply(lambda x: f"{x*100:.1f}%")
         detail_df['recall'] = detail_df['recall'].apply(lambda x: f"{x*100:.1f}%")
-        detail_df['rmse'] = detail_df['rmse'].apply(lambda x: f"{x:.3f}")
-        detail_df['mae'] = detail_df['mae'].apply(lambda x: f"{x:.3f}")
+        
+        # Xử lý cột RMSE/MAE: Nếu là description thì để N/A
+        def format_error_metric(row, col_name):
+            if row['search_type'] == 'description':
+                return "N/A"
+            return f"{row[col_name]:.3f}"
+
+        detail_df['rmse_display'] = detail_df.apply(lambda x: format_error_metric(x, 'rmse'), axis=1)
+        detail_df['mae_display'] = detail_df.apply(lambda x: format_error_metric(x, 'mae'), axis=1)
+        
+        # Xóa cột cũ, dùng cột display
+        detail_df = detail_df.drop(columns=['rmse', 'mae'])
+        
         if 'search_type' in detail_df.columns:
             detail_df['search_type'] = detail_df['search_type'].apply(lambda x: '🔍 Tên' if x == 'title' else ('📝 Mô tả' if x == 'description' else '📋 Nhiều KQ'))
-            detail_df.columns = ['Anime', 'Precision@10', 'Recall@10', 'RMSE', 'MAE', 'Số gợi ý', 'Loại']
+            # Sắp xếp lại cột cho đẹp
+            detail_df = detail_df[['anime', 'precision', 'recall', 'rmse_display', 'mae_display', 'num_recs', 'search_type']]
+            detail_df.columns = ['Anime/Query', 'Precision@10', 'Recall@10', 'RMSE', 'MAE', 'Số gợi ý', 'Loại']
         else:
-            detail_df.columns = ['Anime', 'Precision@10', 'Recall@10', 'RMSE', 'MAE', 'Số gợi ý']
+            detail_df = detail_df[['anime', 'precision', 'recall', 'rmse_display', 'mae_display', 'num_recs']]
+            detail_df.columns = ['Anime/Query', 'Precision@10', 'Recall@10', 'RMSE', 'MAE', 'Số gợi ý']
         
         st.dataframe(detail_df, use_container_width=True, hide_index=True)
         
@@ -592,29 +625,26 @@ with tab3:
         
         st.subheader("📊 Biểu đồ Metrics")
         
-        if len(precisions) > 0:
-            # Giới hạn hiển thị 10 anime gần nhất để biểu đồ không quá rối
-            display_limit = min(10, len(valid_anime))
-            test_names = valid_anime[-display_limit:]
-            display_precisions = precisions[-display_limit:]
-            display_recalls = recalls[-display_limit:]
-            display_rmse = rmse_list[-display_limit:]
-            display_mae = mae_list[-display_limit:]
-            
+        if len(eval_df) > 0:
             fig, axes = plt.subplots(1, 2, figsize=(18, 6))
             
-            # Chart 1: Precision & Recall
-            x = np.arange(len(test_names))
+            # CHART 1: Precision & Recall 
+            display_limit = 10
+            chart_df_all = eval_df.tail(display_limit)
+            
+            names_all = chart_df_all['anime'].tolist()
+            names_all = [name[:15] + '...' if len(name) > 15 else name for name in names_all]
+            
+            x1 = np.arange(len(names_all))
             width = 0.35
             
-            bars1 = axes[0].bar(x - width/2, [p*100 for p in display_precisions], width, label='Precision@10', color='steelblue')
-            bars2 = axes[0].bar(x + width/2, [r*100 for r in display_recalls], width, label='Recall@10', color='coral')
+            bars1 = axes[0].bar(x1 - width/2, [p*100 for p in chart_df_all['precision']], width, label='Precision@10', color='steelblue')
+            bars2 = axes[0].bar(x1 + width/2, [r*100 for r in chart_df_all['recall']], width, label='Recall@10', color='coral')
             
             axes[0].set_ylabel('Score (%)', fontsize=11)
-            axes[0].set_xlabel('Anime', fontsize=11)
-            axes[0].set_title('Precision@10 vs Recall@10 (Realtime)', fontsize=12, fontweight='bold')
-            axes[0].set_xticks(x)
-            axes[0].set_xticklabels([name[:15] + '...' if len(name) > 15 else name for name in test_names], rotation=45, ha='right')
+            axes[0].set_title('Precision & Recall (Bao gồm cả tìm theo mô tả)', fontsize=12, fontweight='bold')
+            axes[0].set_xticks(x1)
+            axes[0].set_xticklabels(names_all, rotation=45, ha='right')
             axes[0].legend()
             axes[0].set_ylim(0, 110)
             axes[0].grid(True, alpha=0.3, axis='y')
@@ -623,38 +653,46 @@ with tab3:
                 height = bar.get_height()
                 axes[0].annotate(f'{height:.0f}%', xy=(bar.get_x() + bar.get_width()/2, height),
                                xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
-            for bar in bars2:
-                height = bar.get_height()
-                axes[0].annotate(f'{height:.0f}%', xy=(bar.get_x() + bar.get_width()/2, height),
-                               xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
             
-            # Chart 2: RMSE & MAE
-            bars3 = axes[1].bar(x - width/2, display_rmse, width, label='RMSE', color='forestgreen')
-            bars4 = axes[1].bar(x + width/2, display_mae, width, label='MAE', color='gold')
+            # --- CHART 2: RMSE & MAE 
+            chart_df_score = eval_df[eval_df['search_type'] != 'description'].tail(display_limit)
             
-            axes[1].set_ylabel('Error Score', fontsize=11)
-            axes[1].set_xlabel('Anime', fontsize=11)
-            axes[1].set_title('RMSE vs MAE (Realtime)', fontsize=12, fontweight='bold')
-            axes[1].set_xticks(x)
-            axes[1].set_xticklabels([name[:15] + '...' if len(name) > 15 else name for name in test_names], rotation=45, ha='right')
-            axes[1].legend()
-            axes[1].grid(True, alpha=0.3, axis='y')
-            
-            for bar in bars3:
-                height = bar.get_height()
-                axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
-                               xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
-            for bar in bars4:
-                height = bar.get_height()
-                axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
-                               xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
-            
+            if len(chart_df_score) > 0:
+                names_score = chart_df_score['anime'].tolist()
+                names_score = [name[:15] + '...' if len(name) > 15 else name for name in names_score]
+                
+                x2 = np.arange(len(names_score))
+                
+                bars3 = axes[1].bar(x2 - width/2, chart_df_score['rmse'], width, label='RMSE', color='forestgreen')
+                bars4 = axes[1].bar(x2 + width/2, chart_df_score['mae'], width, label='MAE', color='gold')
+                
+                axes[1].set_ylabel('Error Score', fontsize=11)
+                axes[1].set_title('RMSE & MAE (Chỉ tính tìm kiếm theo Tên)', fontsize=12, fontweight='bold')
+                axes[1].set_xticks(x2)
+                axes[1].set_xticklabels(names_score, rotation=45, ha='right')
+                axes[1].legend()
+                axes[1].grid(True, alpha=0.3, axis='y')
+                
+                # Annotate Chart 2
+                for bar in bars3:
+                    height = bar.get_height()
+                    axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
+                                   xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
+                for bar in bars4:
+                    height = bar.get_height()
+                    axes[1].annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width()/2, height),
+                                   xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=8)
+            else:
+                axes[1].text(0.5, 0.5, 'Chưa có dữ liệu tìm kiếm theo tên\nđể tính RMSE/MAE', 
+                             ha='center', va='center', fontsize=12, color='gray')
+                axes[1].set_title('RMSE & MAE', fontsize=12, fontweight='bold')
+                axes[1].axis('off')
+
             plt.tight_layout()
             st.pyplot(fig)
             
-            if len(valid_anime) > display_limit:
-                st.caption(f"*Hiển thị {display_limit} anime gần nhất trong tổng số {len(valid_anime)} anime đã test*")
-
+            if len(eval_df) > display_limit:
+                st.caption(f"*Hiển thị {display_limit} mục gần nhất*")
 # Footer
 st.markdown("---")
 st.markdown("""
