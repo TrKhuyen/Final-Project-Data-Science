@@ -486,7 +486,7 @@ with tab2:
     
     viz_dir = Path('visualizations')
     if viz_dir.exists():
-        col1, col2 = st.columns(3)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             if (viz_dir / '01_score_distribution.png').exists():
