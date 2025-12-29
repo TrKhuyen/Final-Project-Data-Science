@@ -486,7 +486,7 @@ with tab2:
     
     viz_dir = Path('visualizations')
     if viz_dir.exists():
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns(3)
         
         with col1:
             if (viz_dir / '01_score_distribution.png').exists():
@@ -501,6 +501,9 @@ with tab2:
             
             if (viz_dir / '04_correlation_heatmap.png').exists():
                 st.image(str(viz_dir / '04_correlation_heatmap.png'))
+        with col3:
+            if (viz_dir / '05_score_vs_scoredby.png').exists():
+                st.image(str(viz_dir / '05_score_vs_scoredby.png'))
     else:
         st.warning("Chưa có biểu đồ. Chạy 03_eda_visualization.py!")
 
